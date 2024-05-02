@@ -1,0 +1,9 @@
+name: ADAPT ID Sync
+type: module
+description: Syncs Adapt ID to H5P nodes
+package: LibreTexts
+version: '1.0'
+core_version_requirement: ^9 || ^10
+dependencies:
+  - drupal:rest
+  - drupal:key

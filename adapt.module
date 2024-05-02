@@ -1,0 +1,181 @@
+<?php
+
+use Drupal\Core\Entity\EntityInterface;
+use Drupal\Core\Entity\EntityTypeManagerInterface;
+use Drupal\Core\Batch\BatchBuilder;
+use Drupal\node\NodeInterface;
+use Drupal\Core\StringTranslation\StringTranslationTrait;
+
+/**
+ * Implements hook_cron().
+ */
+function adapt_cron() {
+  // Load the node storage.
+  $node_storage = \Drupal::entityTypeManager()->getStorage('node');
+
+  // Get nodes that do not have a value for the field_adapt_id field.
+  $query = $node_storage->getQuery()
+    ->condition('type', 'h5p')
+    ->condition('field_adapt_id', NULL, 'IS NULL')
+    ->range(0, 50) // Process 50 nodes per cron run.
+    ->sort('nid');
+
+  $nids = $query->execute();
+
+  if (!empty($nids)) {
+     // Define batch operations.
+     $batch = array(
+      'title' => \Drupal::translation()->translate('Updating Adapt IDs...'),
+      'operations' => array(),
+      'init_message' => \Drupal::translation()->translate('Starting to update Adapt IDs.'),
+      'progress_message' => \Drupal::translation()->translate('Processed @current out of @total nodes.'),
+      'error_message' => \Drupal::translation()->translate('An error occurred during node update.'),
+      'finished' => 'adapt_cron_finished',
+    );
+
+    foreach ($nids as $nid) {
+      $batch['operations'][] = array('adapt_cron_update_node', array($nid));
+    }
+
+    // Start the batch process.
+    batch_set($batch);
+  }
+}
+
+/**
+ * Batch operation: Update a node.
+ */
+function adapt_cron_update_node($nid, &$context) {
+  $node = \Drupal\node\Entity\Node::load($nid);
+  if ($node) {
+    $h5p_id = $node->get('field_h5p')->getValue()[0]['h5p_content_id'];
+
+    // Retrieve the token.
+    /** ToDo:
+     *  We shouldn't fetch token for each node. Move this process up.
+     */
+    $token = fetchToken();
+
+    // Construct API URL with the H5P ID as a parameter.
+    $api_url = 'https://adapt.libretexts.org/api/h5p-collections/get-adapt-question-id-by-h5p-id/' . $h5p_id;
+
+    // Make API request to fetch data.
+    try {
+      $response = \Drupal::httpClient()->get($api_url, [
+        'headers' => [
+          'Authorization' => 'Bearer ' . $token,
+        ],
+      ]);
+
+      // Process API response and update node field.
+      $data = json_decode($response->getBody(), TRUE);
+      if (!empty($data['adapt_question_id'])) {
+        // Update node field field_adapt_id with the API response.
+        $node->set('field_adapt_id', $data['adapt_question_id']);
+        $node->save();
+
+        \Drupal::logger('adapt')->info('Processed node ID @nid.', [
+          '@nid' => $nid,
+        ]);
+      }
+    } catch (\Exception $e) {
+      // Log any errors.
+      \Drupal::logger('adapt')->error('An error occurred while updating field_adapt_id for node ID @nid: @message', [
+        '@nid' => $nid,
+        '@message' => $e->getMessage(),
+      ]);
+    }
+  }
+}
+
+/**
+ * Batch finished callback.
+ */
+function adapt_cron_finished($success, $results, $operations) {
+  if ($success) {
+    \Drupal::logger('adapt')->info('Batch processing completed successfully.');
+  }
+  else {
+    \Drupal::logger('adapt')->error('An error occurred during batch processing.');
+  }
+}
+
+
+/**
+ * Implements hook_ENTITY_TYPE_update() for nodes.
+ * No longer needed as updating field on node_presave doesn't make sense.
+ */
+/*
+function adapt_node_presave(EntityInterface $entity) {
+
+  if ($entity instanceof NodeInterface) {
+    // Check if the node type is the one you want to update.
+    if ($entity->bundle() === 'h5p') {
+      //$h5p_id = $node->field_h5p->getValue()[0]['h5p_content_id'];
+      $h5p_id = $entity->get('field_h5p')->getValue()[0]['h5p_content_id'];
+
+      if (!empty($h5p_id)) {
+        $token = fetchToken();
+
+        // Construct API URL with the H5P ID as a parameter.
+        $api_url = 'https://adapt.libretexts.org/api/h5p-collections/get-adapt-question-id-by-h5p-id/' . $h5p_id;
+
+        // Make API request to fetch data.
+        try {
+          $response = \Drupal::httpClient()->get($api_url, [
+            'headers' => [
+              'Authorization' => 'Bearer ' . $token,
+            ],
+          ]);
+
+          // Process API response and update node field.
+          $data = json_decode($response->getBody(), TRUE);
+          if (!empty($data['adapt_question_id'])) {
+            // Update node field field_adapt_id with the API response.
+            // $entity->get('field_adapt_id')->setValue($data['adapt_question_id']);
+            // $entity->save();
+            $entity->set('field_adapt_id', $data['adapt_question_id']);
+          }
+          \Drupal::logger('adapt')->info('processed @nid: @message', [
+            '@nid' => $entity->id()
+          ]);
+        } catch (\Exception $e) {
+          // Log any errors.
+          \Drupal::logger('adapt')->error('An error occurred while updating field_adapt_id for node @nid: @message', [
+            '@nid' => $entity->id(),
+            '@message' => $e->getMessage(),
+          ]);
+        }
+      }
+    }
+  }
+}
+*/
+
+
+/**
+ * Fetches authentication token from the Key module.
+ *
+ * @return string|null
+ *   The authentication token, or NULL if not found.
+ */
+function fetchToken() {
+  try {
+    // Load the key.
+    $key_id = 'adapt_id';
+    $key = \Drupal::service('key.repository')->getKey($key_id);
+
+    // Check if the key exists and is valid.
+    if ($key && $key->getKeyValue()) {
+      return $key->getKeyValue();
+    } else {
+      return NULL;
+    }
+  } catch (\Exception $e) {
+    // Log error: Unable to load key.
+    \Drupal::logger('adapt')->error('Error loading key: @message', [
+      '@message' => $e->getMessage(),
+    ]);
+    return NULL;
+  }
+}
