@@ -7,6 +7,70 @@ use Drupal\node\NodeInterface;
 use Drupal\Core\StringTranslation\StringTranslationTrait;
 
 /**
+ * Batch operation: Update a node from csv.
+ * Updates nodes from a CSV
+ */
+// function adapt_cron()
+// {
+
+
+//   // Path to the CSV file.
+//   $csv_file_path = 'public://adapt_ids.csv';
+
+
+//   // Load the CSV file.
+//   $file_contents = file_get_contents($csv_file_path);
+
+//   // Parse the CSV file.
+//   $csv_data = str_getcsv($file_contents, "\n");
+
+
+
+//   // Loop through each row in the CSV data.
+//   foreach ($csv_data as $row) {
+
+//     $rowData = str_getcsv($row);
+
+//     // Check if the row contains all expected values.
+//     if (count($rowData) >= 3) {
+//       list($h5p_id, $email, $adapt_question_id) = $rowData;
+
+//       // Extract data from the CSV row.
+//       //list($h5p_id, $email, $adapt_question_id) = str_getcsv($row);
+
+//       // Load the node based on the h5p_id.
+//       $query = \Drupal::database()->select('node__field_h5p', 'nfhp');
+//       $query->fields('nfhp', ['entity_id']);
+//       $query->condition('nfhp.field_h5p_h5p_content_id', $h5p_id);
+//       $nid = $query->execute()->fetchField();
+
+//       // Check if the node exists.
+//       if ($nid) {
+//         // Update the node's field_adapt_id.
+//         $node = \Drupal::entityTypeManager()->getStorage('node')->load($nid);
+//         $node->set('field_adapt_id', $adapt_question_id);
+//         $node->save();
+
+//         \Drupal::logger('adapt_csv_update')->info('Updated field_adapt_id_value to @aid for h5p_id @h5p_id (nid: @nid)', [
+//           '@h5p_id' => $h5p_id,
+//           '@nid' => $nid,
+//           '@aid' => $adapt_question_id,
+//         ]);
+//       } else {
+//         \Drupal::logger('adapt_csv_update')->error('Record not found for h5p_id @h5p_id in node__field_h5p', [
+//           '@h5p_id' => $h5p_id,
+//         ]);
+//       }
+//       // Your existing code to process the row goes here...
+//     } else {
+//       \Drupal::logger('adapt_csv_update')->error('Invalid CSV row: @row', [
+//         '@row' => $row,
+//       ]);
+//     }
+//   }
+// }
+
+/**
  * Implements hook_cron().
  */
 function adapt_cron() {
@@ -21,7 +85,7 @@ function adapt_cron() {
     ->condition('type', 'h5p')
     ->condition('field_adapt_id', NULL, 'IS NULL')
     ->range(0, 50) // Process 50 nodes per cron run.
-    ->sort('nid');
+    ->sort('changed','DESC');
 
   $nids = $query->execute();
 
@@ -34,15 +98,22 @@ function adapt_cron() {
       // H5P Content Id
       $h5p_id = $node->get('field_h5p')->getValue()[0]['h5p_content_id'];
 
+   
+      $request_body = [
+        'email' => 'yasin@libretexts.org',
+      ];
+
       if ($h5p_id) {
         $api_url = 'https://adapt.libretexts.org/api/h5p-collections/get-adapt-question-id-by-h5p-id/' . $h5p_id;
 
         // Make API request to fetch data.
         try {
-          $response = \Drupal::httpClient()->get($api_url, [
+
+          $response = \Drupal::httpClient()->request('PATCH', $api_url, [
             'headers' => [
               'Authorization' => 'Bearer ' . $token,
             ],
+            'json' => $request_body,
           ]);
 
           // Process API response and update node field.
@@ -68,24 +139,24 @@ function adapt_cron() {
   }
 
 
-  // if (!empty($nids)) {
-  //    // Define batch operations.
-  //    $batch = array(
-  //     'title' => \Drupal::translation()->translate('Updating Adapt IDs...'),
-  //     'operations' => array(),
-  //     'init_message' => \Drupal::translation()->translate('Starting to update Adapt IDs.'),
-  //     'progress_message' => \Drupal::translation()->translate('Processed @current out of @total nodes.'),
-  //     'error_message' => \Drupal::translation()->translate('An error occurred during node update.'),
-  //     'finished' => 'adapt_cron_finished',
-  //   );
+//   // if (!empty($nids)) {
+//   //    // Define batch operations.
+//   //    $batch = array(
+//   //     'title' => \Drupal::translation()->translate('Updating Adapt IDs...'),
+//   //     'operations' => array(),
+//   //     'init_message' => \Drupal::translation()->translate('Starting to update Adapt IDs.'),
+//   //     'progress_message' => \Drupal::translation()->translate('Processed @current out of @total nodes.'),
+//   //     'error_message' => \Drupal::translation()->translate('An error occurred during node update.'),
+//   //     'finished' => 'adapt_cron_finished',
+//   //   );
 
-  //   foreach ($nids as $nid) {
-  //     $batch['operations'][] = array('adapt_cron_update_node', array($nid));
-  //   }
+//   //   foreach ($nids as $nid) {
+//   //     $batch['operations'][] = array('adapt_cron_update_node', array($nid));
+//   //   }
 
-  //   // Start the batch process.
-  //   batch_set($batch);
-  // }
+//   //   // Start the batch process.
+//   //   batch_set($batch);
+//   // }
 }
 
 /**
